@@ -47,3 +47,9 @@ def effect_stepToColor(targetColor,perStep):
                 else:
                     newColor.append(pixel[channelID] + perStep)
             trellis.pixels.fill(newColor) 
+def colors(colorName):
+    colors = {
+    "Cool White":(64,128,255),
+    "Warm White":(255,128,64)
+    }
+    return colors[colorName]
