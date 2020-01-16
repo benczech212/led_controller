@@ -49,7 +49,9 @@ def list2uint(inputList):
     #print(output)
     return output
 
-
+def find_nearest1(array,value):
+    idx,val = min(enumerate(array), key=lambda x: abs(x[1]-value))
+    return idx
 
 ######################################################################
 class colorHelper:
@@ -114,60 +116,16 @@ class printHelper:
             return textBuffer
 printh = printHelper()
 
-class pixelColor:
-    def __init__(self, 
-        device, #
-        button, 
-        position,
-        palette, # palette is one or more color values
-        velocity): # velocity is how fast the pixel will change when a new color target is set
-        self.channels = len(palette[0])
-        self.device = device
-        self.button = button
-        self.palette = palette
-        self.palette_default = palette
-        self.velocity = 0.0
-        self.velocityInt = 0
-        self.changeVelocity(velocity)
-        self.velocity_default = velocity
-        self.velocityInt_default = self.velocityInt
-        #print(self.velocityInt)
+class errorHandler:
+    def __init__(self):
+        pass
+    def printError(message):
+        print("!"*60)
+        print(message)
+        print("!"*60)
+errorH = errorHandler()
 
-        self.colorCurrent = [0,0,0]
-        self.colorTarget = palette[0]
-        self.colorNext = [0,0,0]
-        self._visible = True
-        self.idle = True
-
-    def nextFrame(self):
-        if self._visible:
-            self.colorLast = self.colorCurrent
-            for i in range(self.channels):
-                step = 0
-                difference = self.colorTarget[i] - self.colorCurrent[i]
-                if difference != 0:
-                    if difference > self.velocityInt: # if positive Delta is max clamp to max
-                        step = self.velocityInt
-                    elif (difference * -1) > (self.velocityInt): # if negative Delta is max clamp to max
-                        step = self.velocityInt * -1
-                    else: # if less than max velocity
-                        step = difference
-                    self.colorNext[i] = self.colorCurrent[i] + step
-                else: # No Change
-                    self.colorNext[i] = self.colorTarget[i]
-        else: # Not visible
-            self.colorNext = [0,0,0]
-        if self.colorCurrent == self.colorNext:
-            self.idle = True
-        else:
-            self.idle = False
-            self.colorCurrent = self.colorNext
-        trellis.pixels[self.button.posX,self.button.posY] = list2uint(self.colorNext)
-
-    def changeVelocity(self,newVelocity):
-        self.velocity = newVelocity
-        self.velocityInt = int(newVelocity * 255)
-        
+   
 class button:
     buttons = []
     buttonCount = 0
@@ -183,9 +141,12 @@ class button:
         self.lastPressed = []
         self.currentPress = set()
         self.visible = True
-        self.pixelColor = pixelColor(trellis,self,position,palette,velocity)
-        self.buttons.append(self)
+        self.pixelMap = pixelMap(self.matrix.rangeX,self.matrix.rangeY)
+        #self.pixelColor = pixelColor(trellis,self,position,palette,velocity)
         self.buttonID = button.buttonCount
+        self.ledPixel = ledPixel(trellis,self.buttonID)
+        self.buttons.append(self)
+        
         self.longPressThreshold = 5
         button.buttonCount += 1
         matrix.buttons.append(self)
@@ -197,17 +158,18 @@ class button:
 
     def update(self):
         if self.visible:
-            self.pixelColor._visible = True
+            self.ledPixel.ledColor.visible = True
             self.checkIfPressed()
-        else: self.pixelColor._visible = False
-        self.pixelColor.nextFrame()
+        else: self.ledPixel.ledColor.visible = False
+        self.ledPixel.ledColor.update()
 
     def checkIfPressed(self):
         try:
             allPressed = set(self.device.pressed_keys)
         except:
             if debugLevel >= 1:
-                print("Error getting keys pressed")
+                message = "Error getting keys pressed"
+                errorH.printError(message)
             raise
         for press in allPressed:# - self.currentPress:
             if press:
@@ -223,15 +185,15 @@ class button:
     def onPress(self):
         if debugLevel > 0: print("{} Down | Press Count {}".format(self.name,self.pressCount))
 
-        self.pixelColor.colorTarget = (255,255,255)
-        self.pixelColor.changeVelocity(0.1)
+        self.ledPixel.ledColor.color_target = (255,255,255)
+        self.ledPixel.ledColor.changeVelocity(0.1)
         self.pressCount += 1
         if self.pressCount >= self.longPressThreshold:
             self.onLongPress()
         
 
     def onLongPress(self):
-        print("Long Press {}".format(self.name))
+        print("Long Press {} | {}".format(self.name, self.pos))
         
         ####################################
         # Move to ledSegment Class
@@ -241,10 +203,10 @@ class button:
         pixelRange = len(testCanvas.array)-1
 
         for i,pos in enumerate(testCanvas.array):
-            print("Pos {} | i {}".format(pos, i))
             hue = int( (spread * 255) / pixelRange) * i
-            print("Hue {}".format(hue))
-            self.device.pixels[pos[0],pos[1]] = effects.wheel(hue)
+            color = effects.wheel(hue)
+            print("Pos {} | i {} | hue {} | color {}".format(pos, i, hue, color))
+            self.device.pixels[pos[0],pos[1]] = color
         
         pixelRange = len(externalLEDs.pixels)-1
 
@@ -254,8 +216,8 @@ class button:
     def onRelease(self):
         if debugLevel > 0:
             print("{} Up".format(self.name))
-        self.pixelColor.colorTarget = self.pixelColor.palette[0]
-        self.pixelColor.changeVelocity(0.05)
+        self.ledPixel.ledColor.color_target = self.ledPixel.ledColor.palette[0]
+        self.ledPixel.ledColor.changeVelocity(0.05)
         self.pressCount = 0
         
     def addOnPress(self,function):
@@ -285,6 +247,9 @@ class buttonMatrix:
     buttonMatrixes = []
     def __init__(self,device):
         self.device = device
+        self.rangeX = 8
+        self.rangeY = 4
+        self.range = self.rangeX * self.rangeY  
         self.buttons = []
         buttonMatrix.buttonMatrixes.append(self)
     
@@ -406,6 +371,18 @@ class canvas:
     def fill(self,color):
         for i in self.array:
             trellis.pixels[i[0],i[1]] = color
+    def fillFromPixels(self,pixels):
+        pixelsRangePercents = []
+        canvasRangePercents = []
+        
+        for index in range(len(pixels)):
+            pixelsRangePercents.append(index / len(pixels))
+        for index, canvasStep in enumerate(self.array):
+            canvasRangePercents.append(index / len(self.array))
+        for index,i in enumerate(canvasRangePercents):
+            self.array[index] = pixels[find_nearest1(pixelsRangePercents,i)]
+            print()
+
 
 class pixelMap:
     def __init__(self,rangeX,rangeY):
@@ -423,12 +400,15 @@ class pixelMap:
         return pixelMap
     def index2pos(self,index):
         x = index % self.rangeX
-        y = index // self.rangeX
+        y = math.floor(index / self.rangeX)     
         return [x,y]
     def pos2index(self,pos):
         x = pos[0]
         y = pos[1]
         return (x + (y * x) )
+
+trellis.pixelMap = pixelMap(8,4)
+trellis.name = "onboard LEDs"
 
 class ledColor:
     def __init__(self,ledPixel, palette, brightness, velocity):
@@ -453,7 +433,7 @@ class ledColor:
         changeType = "linear step"
         if self.visible:
             if changeType == "linear step":
-                for i in range(self.channels):
+                for i in range(self.channelCount):
                     step = 0
                     difference = self.color_target[i] - self.color_current[i]
                     if difference != 0:
@@ -495,23 +475,23 @@ class ledColor:
         self.palette = validPalette
 
 
+
 class ledPixel:
     ledPixels = []
-    def __init__(self,driver,index,pos):
+    def __init__(self,driver,index):
         self.driver = driver
         self.index = index
-        self.pos = pos
-        self.posX = pos[0]
-        self.posY = pos[1]
+        self.pos = self.driver.pixelMap.index2pos(index)
+        self.posX = self.pos[0]
+        self.posY = self.pos[1]
         self.visible = True
-        print("Adding Pixel to {} | i{} | pos {} |".format(driver.name,index,pos))
+        print("Adding Pixel to {} | i{} | pos {} |".format(driver.name,self.index,self.pos))
         self.ledColor = ledColor(self,[[0,0,0]],1.0,1.0)
         ledPixel.ledPixels.append(self)
 
-
-
-
-
+class ledSegment:
+    def __init__(self):
+        pass 
 
 
 class ledDriver:
@@ -523,9 +503,11 @@ class ledDriver:
     def __init__(self,device,name,ledType,brightnessGain,dataPin, clockPin, pixelMin, pixelMax, rangeX, order, autoWrite):
         if debugLevel > 0:
             print("="*60)
-            print("Adding LED Driver '{}' ".format(name))
+            print(" ---- Adding LED Driver '{}' ----- ".format(name))
+           
         try:
             self.name = name
+            self.device = device
             self.ledType = ledType
             self.brightness = 1.0
             self.brightnessGain = brightnessGain
@@ -543,37 +525,109 @@ class ledDriver:
             self.channelCount = len(order)
             self.channelNames = []
             self.channelLabels = []
+            if debugLevel > 0:
+                 print("Type {}".format(self.ledType))
+                 print("Brightness {}".format(self.brightnessGain))
+                 print("Data Pin {}".format(self.dataPin))
+                 print("Clock Pin {}".format(self.clockPin))
+                 print("pixelMin {}".format(self.pixelMin))
+                 print("pixelMax {}".format(self.pixelMax))
+                 print("pixelRange {}".format(self.pixelRange))
+                 print("rangeX {}".format(self.rangeX))
+                 print("rangeY {}".format(self.rangeY))
+                 print("."*60)
             for channel in order:
                 self.channelNames.append(ledDriver.channelOrderDefault[channel])
                 self.channelNames.append(ledDriver.channelLabelsDefault[channel])
             self.pixels = self.initializePixels()
+            print(self.pixels)
             self.pixelMap = pixelMap(self.rangeX,self.rangeY)
             for index in range(len(self.pixels)):
                 pos = self.pixelMap.index2pos(index)
-                self.ledPixel = ledPixel(self,index,pos)
+                self.ledPixel = ledPixel(self,index)
             #for index in range(self.pixelRange):
-        except:
+            self.clearPixels()
+            self.testPixels()
+            self.clearPixels()
+
+
+        except OSError:
             print("Error Setting up {}".format(self.name))
+            print(OSError)
             print("!"*60)
+    def update(self):
+        self.pixels.show()
 
     def initializePixels(self):
         try:
             if self.ledType == "WS2812":
                 # 3 Wire NeoPixels
-                return neopixel.NeoPixel(self.dataPin, self.pixelRange, brightness=self.brightnessGain, auto_write=self.autoWrite, pixel_order=self.order)
+                try:
+                    return neopixel.NeoPixel(self.dataPin, self.pixelRange, brightness=self.brightnessGain, auto_write=self.autoWrite, pixel_order=self.order)
+                except:
+                    pass
             elif self.ledType == "WS2801":
                 # 4 Wire SPI LEDs
-                return adafruit_ws2801.WS2801(self.clockPin, self.dataPin, self.pixelRange, brightness=self.brightnessGain, auto_write=self.autoWrite)
-                
+                try:
+                    return adafruit_ws2801.WS2801(self.clockPin, self.dataPin, self.pixelRange, brightness=self.brightnessGain, auto_write=self.autoWrite)
+                except:
+                    pass
+            elif self.ledType == "INUSE":
+                try:
+                    pass
+                except:
+                    pass
         except:
-            print("Invalid LED Type {}".format(self.ledType))
-            raise NameError("Invalid LED Type")
+            pass
+            
 
     def randomPixel(self):
             try: randomPixel = random.randrange(self.pixelMin, self.pixelMax)
             except: randomPixel = self.pixelMin
             return randomPixel
-        
+    def clearPixels(self):
+        self.pixels.fill(0)
+        self.pixels.show()
+    def testPixels(self):
+        if debugLevel > 0:
+            print("Testing Pixels")
+        colors = [(255,0,0),(0,255,0),(0,0,255),(255,255,255)]
+        colorNames = ["Red","Green","Blue","White"]
+        for index, color in enumerate(colors):
+            if debugLevel > 0:
+                print(" --> {}".format(colorNames[index]))
+            self.pixels.fill(color)
+            self.update()
+            time.sleep(0.25)
+            self.clearPixels()
+            self.update()
+            time.sleep(0.25)
+        loopCount = 127
+        if debugLevel > 0:
+            print("Testing color spectrum")
+        for loop in range (loopCount):
+            scale = 1.0
+            stepFloat = (1 / self.pixelRange) * scale
+            stepInt = int(stepFloat * 255)
+            for pixelID in range(self.pixelRange):    
+                hue = (stepInt * pixelID) + loop
+                color = effects.wheel(hue)
+                if debugLevel > 1:
+                    print("loopNum {} | pixel ID {:3} | Hue {:3} | color {} ".format(loop, pixelID,hue,color))
+
+                self.pixels[pixelID] = color
+            self.pixels.show()
+            if debugLevel > 1:
+                print("."*60)
+        if debugLevel > 1:
+            print("-"*60)
+    @classmethod
+    def inUse(cls, pixelObject):
+        pass
+
+            
+            
+               
 
     
 
@@ -625,9 +679,11 @@ counter1 = counter(255)
 
 testCanvas = canvas([0,0],[7,0])
 #testCanvas.testArea()
+externalLEDs = ledDriver(None,"1M Strip","WS2812",1.0,board.SCL,None,0,29,1,neopixel.GRB,False)
+    #externalLEDs = ledDriver(None,"Christmas Lights","WS2801",1.0,board.SDA,board.SCL,0,23,1,neopixel.GRB,False)
+    
+#onboardLEDs = ledDriver(trellis,"LED Buttons","INUSE",1.0,board.NEOPIXEL,None,0,31,8,neopixel.GRB,False)
 
-externalLEDs = ledDriver(None,"Christmas Lights","WS2801",1.0,board.SDA,board.SCL,0,23,1,neopixel.GRB,False)
-#onboardLEDs = ledDriver(trellis,"LED Buttons","WS2812",1.0,board.NEOPIXEL,None,0,31,8,neopixel.GRB,False)
 
 
 #buttonMove_NegX(button_cursor)
@@ -652,25 +708,27 @@ def mainLoop():
     global counter1, timer1
     
     matrix.update()
+    #TODO: Move .show() to ledDriver Update
     trellis.pixels.show()
-    externalLEDs.pixels.show()
+    externalLEDs.update()
+    ##################################
     counter1.timer.setTarget(0.1)
     counter1.tick()
     if debugLevel >= 2:
         printDebug()
 
         
-color = (255,0,0)
-externalLEDs.pixels.fill(color)
-testCanvas.fill(color)
 
 
 
-loopCount = 0
+
+
 while True:    
-    for i in range(128):
+    for loopCycle in range(128):
         mainLoop()
-        
+        externalLEDs.pixels.fill((255,255,255))
+        pixelBuffer = externalLEDs.pixels
+        testCanvas.fillFromPixels(pixelBuffer)
         #print(clock.timestamps)
         
         
